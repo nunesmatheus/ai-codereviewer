@@ -200,6 +200,8 @@ function main() {
         else if (eventData.action === "synchronize") {
             const newBaseSha = eventData.before;
             const newHeadSha = eventData.after;
+            core.info(`new base sha: ${newBaseSha}`);
+            core.info(`new head sha: ${newHeadSha}`);
             const response = yield octokit.repos.compareCommits({
                 headers: {
                     accept: "application/vnd.github.v3.diff",
@@ -220,6 +222,7 @@ function main() {
             return;
         }
         const parsedDiff = (0, parse_diff_1.default)(diff);
+        core.info(`Parsed diff: ${JSON.stringify(parsedDiff)}`);
         const excludePatterns = core
             .getInput("exclude")
             .split(",")
