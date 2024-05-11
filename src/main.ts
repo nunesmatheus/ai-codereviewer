@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import OpenAI from "openai";
@@ -7,11 +7,6 @@ import parseDiff, { Chunk, File } from "parse-diff";
 import minimatch from "minimatch";
 import { DefaultArtifactClient } from '@actions/artifact'
 import AdmZip from "adm-zip";
-import { diffLines } from "diff";
-
-const { exec } = require('child_process');
-const util = require('util');
-const execAsync = util.promisify(exec);
 
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
@@ -29,8 +24,6 @@ interface PRDetails {
   pull_number: number;
   title: string;
   description: string;
-  baseBranch: string;
-  headSha: string;
 }
 
 async function getPRDetails(): Promise<PRDetails> {
@@ -42,22 +35,16 @@ async function getPRDetails(): Promise<PRDetails> {
     repo: repository.name,
     pull_number: number,
   });
-  // core.info(`PR response: ${JSON.stringify(prResponse)}`)
   return {
     owner: repository.owner.login,
     repo: repository.name,
     pull_number: number,
     title: prResponse.data.title ?? "",
-    description: prResponse.data.body ?? "",
-    baseBranch: prResponse.data.base.ref,
-    headSha: prResponse.data.head.sha
+    description: prResponse.data.body ?? ""
   };
 }
 
 async function getLastSuccessfulRunId(owner: string, repo: string, branch: string): Promise<number | null> {
-  // core.info(`github context: ${JSON.stringify(github.context)}`)
-  // core.info(`current workflow id: ${github.context.workflow}`)
-
   const runId = github.context.runId;
 
   const runDetails = await octokit.rest.actions.getWorkflowRun({
@@ -66,22 +53,18 @@ async function getLastSuccessfulRunId(owner: string, repo: string, branch: strin
     run_id: runId
   });
 
-  core.info(`workflow url: ${runDetails.data.workflow_url}`)
-  const workflowId = runDetails.data.workflow_url.split('/').pop(); // Extract the filename from the URL
-  core.info(`Workflow ID: ${workflowId}`);
+  const workflowId = runDetails.data.workflow_url.split('/').pop();
 
   const { data: runs } = await octokit.rest.actions.listWorkflowRuns({
     owner,
     repo,
-    branch, // Filter by the branch associated with the PR
+    branch,
     status: 'completed',
     conclusion: 'success',
     // @ts-expect-error - workflow_id exists
     workflow_id: workflowId
   });
-  // core.info(`runs: ${JSON.stringify(runs)}`)
 
-  // Return the latest successful run on the branch
   return runs.total_count > 0 ? runs.workflow_runs[0].id : null;
 }
 
@@ -106,7 +89,7 @@ async function downloadAndExtractArtifact(artifactId: number, path: string): Pro
   });
   // @ts-expect-error - response.data is a string
   const zip = new AdmZip(Buffer.from(response.data));
-  zip.extractAllTo(path, true); // Extract to the specified path
+  zip.extractAllTo(path, true);
 }
 async function getDiff(
   owner: string,
@@ -135,8 +118,6 @@ async function getDiff(
       core.info("No successful last run found")
     }
 
-    // await savePatch({ headSha, base_branch: baseBranch })
-
     const currentDiff = await getFullPrDiff({ owner, repo, pull_number });
     writeFileSync('current_diff.txt', String(currentDiff));
 
@@ -164,147 +145,6 @@ async function getDiff(
     core.info(`Artifact not found: ${artifactName}`)
     return parseDiff('')
   }
-}
-
-// async function getDiff(
-//   owner: string,
-//   repo: string,
-//   pull_number: number,
-//   baseBranch: string,
-//   headSha: string
-// ): Promise<string | null> {
-//   const artifactName = `diff-${pull_number}`;
-//   const downloadPath = '.';
-
-//   try {
-//     const runId = await getLastSuccessfulRunId(owner, repo, '');
-//     core.info(`Last successful run ID: ${runId}`)
-//     let previousDiff = '';
-//     if (runId) {
-//       const artifactId = await getArtifactId(runId, artifactName);
-//       core.info(`Last successful run artifact ID: ${runId}`)
-//       if (artifactId) {
-//         core.info("Downloading and extracting artifact...")
-//         await downloadAndExtractArtifact(artifactId, downloadPath)
-//         previousDiff = readFileSync(`${downloadPath}/diff.patch`, 'utf8');
-//         core.info("Found previous diff artifact!")
-//       } else {
-//         core.info("No artifact found for last successful run")
-//       }
-//     } else {
-//       core.info("No successful last run found")
-//     }
-
-//     await savePatch({ headSha, base_branch: baseBranch })
-
-//     if (previousDiff) {
-//       return applyPatchAndCompare(baseBranch)
-//     }
-
-//     const fullDiff = await getFullPrDiff({ owner, repo, pull_number });
-//     core.info(`Full diff:\n${fullDiff}`)
-//     const files = parseDiff(String(fullDiff))
-//     // TODO: We need to filter the chunks here that were already analyzed
-//     // Worst case scenario, we at least exclude the files where all chunks have been analyzed
-//     files.forEach(function(file) {
-//       console.log(file.chunks.length); // number of hunks
-//       console.log(file.chunks[0].changes.length) // hunk added/deleted/context lines
-//       // each item in changes is a string
-//       console.log(file.deletions); // number of deletions in the patch
-//       console.log(file.additions); // number of additions in the patch
-//       core.info(`chunks: ${JSON.stringify(file.chunks)}`)
-//     });
-
-//     const { stdout: diffOutput } = await execAsync('git diff HEAD...origin/pr/HEAD');
-//     return diffOutput
-
-//     // const response = await getFullPrDiff({ owner, repo, pull_number });
-//     // const fullDiff = String(response);
-
-//     // const trueDiff = previousDiff && compareDiffs(previousDiff, fullDiff) || fullDiff
-
-//     // return [trueDiff, fullDiff]
-//   } catch (error) {
-//     core.error(`Error: ${error}`)
-//     core.info(`Artifact not found: ${artifactName}`)
-//     return null
-//   }
-// }
-
-// @ts-expect-error - pull_number and base_branch exists where needed
-async function savePatch({ headSha, base_branch }) {
-  await execAsync('git fetch origin');
-  await execAsync(`git checkout ${base_branch}`);
-  await execAsync(`git diff HEAD...${headSha} > diff.patch`);
-}
-
-async function applyPatchAndCompare(base_branch: string) {
-  await execAsync(`git checkout ${base_branch}`);
-  // Download the artifact containing the diff
-  await execAsync(`git apply ./diff.patch`);
-
-  // Now the repository is in the state of the last successful run + the base branch
-  // Compare this state to the current HEAD of the PR
-  const { stdout: diffOutput } = await execAsync('git diff HEAD...origin/pr/HEAD');
-  console.log('Diff between applied state and current PR head:', diffOutput);
-  return diffOutput;
-}
-// async function getDiff(
-//   owner: string,
-//   repo: string,
-//   pull_number: number
-// ): Promise<string[] | null[]> {
-//   const artifactName = `diff-${pull_number}`;
-//   const downloadPath = '.';
-
-//   try {
-//     const runId = await getLastSuccessfulRunId(owner, repo, '');
-//     core.info(`Last successful run ID: ${runId}`)
-//     let previousDiff = '';
-//     if (runId) {
-//       const artifactId = await getArtifactId(runId, artifactName);
-//       core.info(`Last successful run artifact ID: ${runId}`)
-//       if (artifactId) {
-//         core.info("Downloading and extracting artifact...")
-//         await downloadAndExtractArtifact(artifactId, downloadPath)
-//         previousDiff = readFileSync(`${downloadPath}/current_diff.txt`, 'utf8');
-//         core.info("Found previous diff artifact!")
-//       } else {
-//         core.info("No artifact found for last successful run")
-//       }
-//     } else {
-//       core.info("No successful last run found")
-//     }
-
-//     const response = await getFullPrDiff({ owner, repo, pull_number });
-//     const fullDiff = String(response);
-
-//     const trueDiff = previousDiff && compareDiffs(previousDiff, fullDiff) || fullDiff
-
-//     return [trueDiff, fullDiff]
-//   } catch (error) {
-//     core.error(`Error: ${error}`)
-//     core.info(`Artifact not found: ${artifactName}`)
-//     return [null, null]
-//   }
-// }
-
-function compareDiffs(previousDiff: string, latestDiff: string): string {
-  const diff = diffLines(previousDiff, latestDiff);
-  let newDiff = '';
-
-  diff.forEach(part => {
-    // green for additions, red for deletions
-    // grey for common parts
-    const color = part.added ? 'green' :
-      part.removed ? 'red' : 'grey';
-
-    if (color === 'green') {
-      newDiff += part.value;
-    }
-  });
-
-  return newDiff;
 }
 
 async function getFullPrDiff({ owner, repo, pull_number }: any): Promise<string> {
@@ -448,20 +288,10 @@ async function main() {
   core.info("Getting PR details...")
   const prDetails = await getPRDetails();
   core.info("Getting diff...")
-  const diff = await getDiff(prDetails.owner, prDetails.repo, prDetails.pull_number);
+  const diffFiles = await getDiff(prDetails.owner, prDetails.repo, prDetails.pull_number);
 
-  if (!diff) {
-    core.info("No diff found");
-    return;
-  }
+  if (diffFiles.length === 0) return core.info("No diff found");
 
-  core.info(`DIFF:`)
-  diff.forEach((file) => {
-    core.info(`File: ${file.to}`)
-    file.chunks.forEach((chunk) => {
-      core.info(`Chunk: ${chunk.content}`)
-    })
-  })
 
   core.info("Parsing diff...")
 
@@ -470,7 +300,7 @@ async function main() {
     .split(",")
     .map((s) => s.trim());
 
-  const filteredDiff = diff.filter((file) => {
+  const filteredDiff = diffFiles.filter((file) => {
     return !excludePatterns.some((pattern) =>
       minimatch(file.to ?? "", pattern)
     );
@@ -494,19 +324,15 @@ async function main() {
   const artifactName = `diff-${prDetails.pull_number}`;
 
   const files = ['current_diff.txt'];
-  const { id, size } = await artifact.uploadArtifact(
-    // name of the artifact
+  await artifact.uploadArtifact(
     artifactName,
-    // files to include (supports absolute and relative paths)
     files,
     '.',
     {
-      // optional: how long to retain the artifact
-      // if unspecified, defaults to repository/org retention settings (the limit of this value)
-      retentionDays: 10
+      retentionDays: 7
     }
   )
-  console.log(`Created artifact with id: ${id} (bytes: ${size}`)
+  core.info("Uploaded artifact!")
 }
 
 main().catch((error) => {
