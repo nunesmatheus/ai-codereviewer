@@ -303,6 +303,7 @@ async function analyzeCode(
     for (const chunk of file.chunks) {
       const chunkComments = await existingComments(file, chunk, prDetails)
       const prompt = createPrompt(file, chunk, prDetails, chunkComments);
+      core.info(`------ Prompt: \n\n${prompt}\n\n`);
       const aiResponse = await getAIResponse(prompt);
       if (aiResponse) {
         const newComments = createComment(file, chunk, aiResponse);
