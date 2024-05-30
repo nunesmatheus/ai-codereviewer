@@ -26,6 +26,12 @@ interface PRDetails {
   description: string;
 }
 
+type Comment = {
+  body: string;
+  path: string;
+  line: number;
+};
+
 async function getPRDetails(): Promise<PRDetails> {
   const { repository, number } = JSON.parse(
     readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8")
@@ -91,6 +97,7 @@ async function downloadAndExtractArtifact(artifactId: number, path: string): Pro
   const zip = new AdmZip(Buffer.from(response.data));
   zip.extractAllTo(path, true);
 }
+
 async function getDiff(
   owner: string,
   repo: string,
@@ -105,7 +112,7 @@ async function getDiff(
     let previousDiff = '';
     if (runId) {
       const artifactId = await getArtifactId(runId, artifactName);
-      core.info(`Last successful run artifact ID: ${runId}`)
+      core.info(`Last successful run artifact ID: ${artifactId}`)
       if (artifactId) {
         core.info("Downloading and extracting artifact...")
         await downloadAndExtractArtifact(artifactId, downloadPath)
@@ -128,13 +135,11 @@ async function getDiff(
 
     return currentFilesDiff.filter((currentFile) => {
       currentFile.chunks = currentFile.chunks.filter((currentChunk) => {
-        core.info(`Chunk: ${JSON.stringify(currentChunk.changes)}`)
         const isRepeatingChunk = !!previousFilesDiff.find((previousFile) => {
           return previousFile.chunks.find((previousChunk) => {
             return JSON.stringify(previousChunk.changes) === JSON.stringify(currentChunk.changes);
           })
         })
-        core.info(`isReapeatingChunk: ${isRepeatingChunk}, content: ${currentChunk.content}`)
         return !isRepeatingChunk;
       })
 
@@ -157,7 +162,7 @@ async function getFullPrDiff({ owner, repo, pull_number }: any): Promise<string>
   return String(response.data);
 }
 
-function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
+function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails, existingComments: Comment[]): string {
   return `Your task is to review pull requests. Instructions:
 - Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewComment": "<review comment>"}]}
 - Do not give positive comments or compliments.
@@ -187,7 +192,33 @@ ${chunk.changes
       .map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
       .join("\n")}
 \`\`\`
-`;
+
+${existingCommentsPrompt(existingComments)}`;
+}
+
+function existingCommentsPrompt(existingComments: Comment[]) {
+  if (existingComments.length === 0) return ""
+
+  const commentMessages = existingComments.map(comment => `Line ${comment.line}: ${comment.body}`)
+  const commentsText = [...new Set(commentMessages)].join("\n")
+  return `These comments were already made by other reviewers, so do not cover these points:
+"""
+${commentsText}
+"""
+`
+}
+
+async function existingComments(file: File, chunk: Chunk, prDetails: PRDetails): Promise<any[]> {
+  const existingComments = await getExistingComments(prDetails.owner, prDetails.repo, prDetails.pull_number);
+  return existingComments.filter((comment: any) => {
+    return (
+      comment.path === file.to &&
+      // @ts-expect-error
+      comment.line >= chunk.changes[0].ln &&
+      // @ts-expect-error
+      comment.line <= chunk.changes[chunk.changes.length - 1].ln
+    )
+  }).sort((a: any, b: any) => a.line - b.line);
 }
 
 async function getAIResponse(prompt: string): Promise<Array<{
@@ -270,7 +301,8 @@ async function analyzeCode(
   for (const file of parsedDiff) {
     if (file.to === "/dev/null") continue; // Ignore deleted files
     for (const chunk of file.chunks) {
-      const prompt = createPrompt(file, chunk, prDetails);
+      const chunkComments = await existingComments(file, chunk, prDetails)
+      const prompt = createPrompt(file, chunk, prDetails, chunkComments);
       const aiResponse = await getAIResponse(prompt);
       if (aiResponse) {
         const newComments = createComment(file, chunk, aiResponse);
@@ -283,6 +315,31 @@ async function analyzeCode(
   return comments;
 }
 
+async function getExistingComments(owner: string, repo: string, pull_number: number) {
+  let page = 1
+  let pageData = await getExistingCommentsPage(owner, repo, pull_number, page);
+  let data = pageData
+  while (pageData.length > 0) {
+    page++;
+    pageData = await getExistingCommentsPage(owner, repo, pull_number, page);
+    data = [...data, ...pageData];
+  }
+  core.info(`${data.length} existing comments found.`)
+  return data;
+}
+
+async function getExistingCommentsPage(owner: string, repo: string, pull_number: number, page: number) {
+  const { data } = await octokit.pulls.listReviewComments({
+    owner,
+    repo,
+    pull_number,
+    page: page,
+    per_page: 100,
+    sort: "created",
+    direction: "desc",
+  });
+  return data
+}
 
 async function main() {
   core.info("Getting PR details...")
@@ -290,8 +347,17 @@ async function main() {
   core.info("Getting diff...")
   const diffFiles = await getDiff(prDetails.owner, prDetails.repo, prDetails.pull_number);
 
-  if (diffFiles.length === 0) return core.info("No diff found");
+  diffFiles.forEach((file) => {
+    file.chunks.filter((chunk) => {
+      const changes = chunk.changes
+        // @ts-expect-error - ln and ln2 exists where needed
+        .map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
+        .join("\n")
+      core.info(`\n\n------- Changes:\n${changes}\n-------\n\n`)
+    })
+  })
 
+  if (diffFiles.length === 0) return core.info("No diff found");
 
   core.info("Parsing diff...")
 
@@ -321,7 +387,7 @@ async function main() {
 
   core.info("Uploading patch as artifact...")
   const artifact = new DefaultArtifactClient()
-  const artifactName = `diff-${prDetails.pull_number}`;
+  const artifactName = `diff - ${prDetails.pull_number} `;
 
   const files = ['current_diff.txt'];
   await artifact.uploadArtifact(
