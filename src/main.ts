@@ -388,7 +388,7 @@ async function main() {
 
   core.info("Uploading patch as artifact...")
   const artifact = new DefaultArtifactClient()
-  const artifactName = `diff - ${prDetails.pull_number} `;
+  const artifactName = `diff-${prDetails.pull_number}`;
 
   const files = ['current_diff.txt'];
   await artifact.uploadArtifact(
