@@ -201,7 +201,7 @@ function existingCommentsPrompt(existingComments: Comment[]) {
 
   const commentMessages = existingComments.map(comment => `Line ${comment.line}: ${comment.body}`)
   const commentsText = [...new Set(commentMessages)].join("\n")
-  return `These comments were already made by other reviewers, so do not cover these points:
+  return `These comments were already made by other reviewers, so do not cover these points on the same lines:
 """
 ${commentsText}
 """
@@ -210,13 +210,13 @@ ${commentsText}
 
 async function existingComments(file: File, chunk: Chunk, prDetails: PRDetails): Promise<any[]> {
   const existingComments = await getExistingComments(prDetails.owner, prDetails.repo, prDetails.pull_number);
+  // @ts-expect-error
+  const chunkLines = chunk.changes.map(change => change.ln ? change.ln : change.ln2)
   return existingComments.filter((comment: any) => {
     return (
       comment.path === file.to &&
-      // @ts-expect-error
-      comment.line >= chunk.changes[0].ln &&
-      // @ts-expect-error
-      comment.line <= chunk.changes[chunk.changes.length - 1].ln
+      comment.line >= Math.min(...chunkLines) &&
+      comment.line <= Math.max(...chunkLines)
     )
   }).sort((a: any, b: any) => a.line - b.line);
 }
