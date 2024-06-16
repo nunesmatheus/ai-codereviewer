@@ -342,11 +342,30 @@ async function getExistingCommentsPage(owner: string, repo: string, pull_number:
   return data
 }
 
+async function uploadDiff(prDetails: any) {
+  core.info("Uploading patch as artifact...")
+  const artifact = new DefaultArtifactClient()
+  const artifactName = `diff-${prDetails.pull_number}`;
+
+  const files = ['current_diff.txt'];
+  await artifact.uploadArtifact(
+    artifactName,
+    files,
+    '.',
+    {
+      retentionDays: 7
+    }
+  )
+  core.info("Uploaded artifact!")
+}
+
 async function main() {
   core.info("Getting PR details...")
   const prDetails = await getPRDetails();
   core.info("Getting diff...")
   const diffFiles = await getDiff(prDetails.owner, prDetails.repo, prDetails.pull_number);
+
+  await uploadDiff(prDetails)
 
   diffFiles.forEach((file) => {
     file.chunks.filter((chunk) => {
@@ -385,21 +404,6 @@ async function main() {
       comments
     );
   }
-
-  core.info("Uploading patch as artifact...")
-  const artifact = new DefaultArtifactClient()
-  const artifactName = `diff-${prDetails.pull_number}`;
-
-  const files = ['current_diff.txt'];
-  await artifact.uploadArtifact(
-    artifactName,
-    files,
-    '.',
-    {
-      retentionDays: 7
-    }
-  )
-  core.info("Uploaded artifact!")
 }
 
 main().catch((error) => {
