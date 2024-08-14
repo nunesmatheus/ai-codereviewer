@@ -55,6 +55,12 @@ const octokit = new rest_1.Octokit({ auth: GITHUB_TOKEN });
 const openai = new openai_1.default({
     apiKey: OPENAI_API_KEY,
 });
+const jsonModeSupportedModels = [
+    "gpt-4-1106-preview",
+    "gpt-3.5-turbo",
+    "gpt-4-turbo",
+    "gpt-4o",
+];
 function getPRDetails() {
     var _a, _b;
     return __awaiter(this, void 0, void 0, function* () {
@@ -115,7 +121,7 @@ function createPrompt(file, chunk, prDetails) {
 - IMPORTANT: NEVER suggest adding comments to the code.
 
 Review the following code diff in the file "${file.to}" and take the pull request title and description into account when writing the response.
-  
+
 Pull request title: ${prDetails.title}
 Pull request description:
 
@@ -146,9 +152,7 @@ function getAIResponse(prompt) {
             presence_penalty: 0,
         };
         try {
-            const response = yield openai.chat.completions.create(Object.assign(Object.assign(Object.assign({}, queryConfig), (OPENAI_API_MODEL === "gpt-4-1106-preview"
-                ? { response_format: { type: "json_object" } }
-                : {})), { messages: [
+            const response = yield openai.chat.completions.create(Object.assign(Object.assign(Object.assign({}, queryConfig), jsonModeOptions()), { messages: [
                     {
                         role: "system",
                         content: prompt,
@@ -162,6 +166,11 @@ function getAIResponse(prompt) {
             return null;
         }
     });
+}
+function jsonModeOptions() {
+    if (!jsonModeSupportedModels.includes(OPENAI_API_MODEL))
+        return {};
+    return { response_format: { type: "json_object" } };
 }
 function createComment(file, chunk, aiResponses) {
     return aiResponses.flatMap((aiResponse) => {

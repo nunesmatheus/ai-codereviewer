@@ -15,6 +15,13 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
+const jsonModeSupportedModels = [
+  "gpt-4-1106-preview",
+  "gpt-3.5-turbo",
+  "gpt-4-turbo",
+  "gpt-4o",
+];
+
 interface PRDetails {
   owner: string;
   repo: string;
@@ -90,7 +97,7 @@ function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
 Review the following code diff in the file "${
     file.to
   }" and take the pull request title and description into account when writing the response.
-  
+
 Pull request title: ${prDetails.title}
 Pull request description:
 
@@ -126,10 +133,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
   try {
     const response = await openai.chat.completions.create({
       ...queryConfig,
-      // return JSON if the model supports it:
-      ...(OPENAI_API_MODEL === "gpt-4-1106-preview"
-        ? { response_format: { type: "json_object" } }
-        : {}),
+      ...jsonModeOptions(),
       messages: [
         {
           role: "system",
@@ -144,6 +148,12 @@ async function getAIResponse(prompt: string): Promise<Array<{
     console.error("Error:", error);
     return null;
   }
+}
+
+function jsonModeOptions(): Record<string, unknown> {
+  if (!jsonModeSupportedModels.includes(OPENAI_API_MODEL)) return {};
+
+  return { response_format: { type: "json_object" } };
 }
 
 function createComment(
