@@ -58,6 +58,37 @@ jobs:
 The AI Code Reviewer GitHub Action retrieves the pull request diff, filters out excluded files, and sends code chunks to
 the OpenAI API. It then generates review comments based on the AI's response and adds them to the pull request.
 
+The diff to be reviewed is calculated by comparing the diff from the head commit with the diff from the previous commit,
+which is uploaded as a Github Actions artifact at the end of the action. This strategy is used to be able to identify
+the accurate diff between pushes, even if the branch history has changed with a rebase or amend via force-push and the
+previous commit no longer exists.
+
+```mermaid
+sequenceDiagram
+    participant GitHub_Action as GitHub Action
+    participant GitHub as GitHub
+    participant OpenAI as OpenAI API
+
+    GitHub_Action->>GitHub: Retrieve diff from HEAD commit
+    GitHub-->>GitHub_Action: Return diff
+    GitHub_Action->>GitHub: Get last uploaded diff
+    GitHub-->>GitHub_Action: Return last uploaded diff (if available)
+
+    alt An uploaded diff has been found
+        GitHub_Action->>GitHub_Action: Compare current diff with the uploaded diff
+    else
+        GitHub_Action->>GitHub_Action: Use current diff
+    end
+
+    GitHub_Action->>GitHub_Action: Filter out excluded files
+    GitHub_Action->>OpenAI: Send code chunks
+    OpenAI-->>GitHub_Action: Generate review comments
+
+    GitHub_Action->>GitHub: Make PR review with the generated comments
+
+    GitHub_Action->>GitHub: Upload current PR diff as artifact
+```
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests to improve the AI Code Reviewer GitHub
