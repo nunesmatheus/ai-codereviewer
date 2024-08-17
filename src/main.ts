@@ -196,16 +196,7 @@ async function uploadDiff(prDetails: any) {
   core.info("Uploaded artifact!");
 }
 
-async function main() {
-  core.info("Getting PR details...");
-  const prDetails = await getPRDetails();
-  core.info("Getting diff...");
-  const diffFiles = await getDiff(
-    prDetails.owner,
-    prDetails.repo,
-    prDetails.pull_number
-  );
-
+function logDiff(diffFiles: File[]) {
   diffFiles.forEach((file) => {
     file.chunks.filter((chunk) => {
       const changes = chunk.changes
@@ -215,6 +206,17 @@ async function main() {
       core.info(`\n\n------- Changes:\n${changes}\n-------\n\n`);
     });
   });
+}
+
+async function main() {
+  core.info("Getting PR details...");
+  const prDetails = await getPRDetails();
+  core.info("Getting diff...");
+  const diffFiles = await getDiff(
+    prDetails.owner,
+    prDetails.repo,
+    prDetails.pull_number
+  );
 
   if (diffFiles.length === 0) {
     core.info("No diff found");
@@ -234,6 +236,8 @@ async function main() {
       minimatch(file.to ?? "", pattern)
     );
   });
+
+  logDiff(filteredDiff);
 
   core.info("Analyzing code with GPT...");
   const comments = await analyzeCode(filteredDiff, prDetails);
