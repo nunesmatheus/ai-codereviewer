@@ -198,7 +198,7 @@ async function uploadDiff(prDetails: any) {
 
 function logDiff(diffFiles: File[]) {
   diffFiles.forEach((file) => {
-    file.chunks.filter((chunk) => {
+    file.chunks.forEach((chunk) => {
       const changes = chunkChangesText(chunk);
       core.info(`\n\n------- Changes:\n${changes}\n-------\n\n`);
     });
