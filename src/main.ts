@@ -56,12 +56,7 @@ async function getPRDetails(): Promise<PRDetails> {
   };
 }
 
-function createPrompt(
-  file: File,
-  chunk: Chunk,
-  prDetails: PRDetails,
-  existingComments: Comment[]
-): string {
+function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
   return `Your task is to review pull requests. Instructions:
 - Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewComment": "<review comment>"}]}
 - Do not give positive comments or compliments.
@@ -90,45 +85,7 @@ ${chunk.changes
   .map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
   .join("\n")}
 \`\`\`
-
-${existingCommentsPrompt(existingComments)}`;
-}
-
-function existingCommentsPrompt(existingComments: Comment[]) {
-  if (existingComments.length === 0) return "";
-
-  const commentMessages = existingComments.map(
-    (comment) => `Line ${comment.line}: ${comment.body}`
-  );
-  const commentsText = [...new Set(commentMessages)].join("\n");
-  return `These comments were already made by other reviewers, so do not cover these points:
-"""
-${commentsText}
-"""
 `;
-}
-
-async function existingComments(
-  file: File,
-  chunk: Chunk,
-  prDetails: PRDetails
-): Promise<any[]> {
-  const existingComments = await getExistingComments(
-    prDetails.owner,
-    prDetails.repo,
-    prDetails.pull_number
-  );
-  return existingComments
-    .filter((comment: any) => {
-      return (
-        comment.path === file.to &&
-        // @ts-expect-error
-        comment.line >= chunk.changes[0].ln &&
-        // @ts-expect-error
-        comment.line <= chunk.changes[chunk.changes.length - 1].ln
-      );
-    })
-    .sort((a: any, b: any) => a.line - b.line);
 }
 
 async function getAIResponse(prompt: string): Promise<Array<{
@@ -214,8 +171,7 @@ async function analyzeCode(
   for (const file of parsedDiff) {
     if (file.to === "/dev/null") continue; // Ignore deleted files
     for (const chunk of file.chunks) {
-      const chunkComments = await existingComments(file, chunk, prDetails);
-      const prompt = createPrompt(file, chunk, prDetails, chunkComments);
+      const prompt = createPrompt(file, chunk, prDetails);
       const aiResponse = await getAIResponse(prompt);
       if (aiResponse) {
         const newComments = createComment(file, chunk, aiResponse);
@@ -226,41 +182,6 @@ async function analyzeCode(
     }
   }
   return comments;
-}
-
-async function getExistingComments(
-  owner: string,
-  repo: string,
-  pull_number: number
-) {
-  let page = 1;
-  let pageData = await getExistingCommentsPage(owner, repo, pull_number, page);
-  let data = pageData;
-  while (pageData.length > 0) {
-    page++;
-    pageData = await getExistingCommentsPage(owner, repo, pull_number, page);
-    data = [...data, ...pageData];
-  }
-  core.info(`${data.length} existing comments found.`);
-  return data;
-}
-
-async function getExistingCommentsPage(
-  owner: string,
-  repo: string,
-  pull_number: number,
-  page: number
-) {
-  const { data } = await octokit.pulls.listReviewComments({
-    owner,
-    repo,
-    pull_number,
-    page: page,
-    per_page: 100,
-    sort: "created",
-    direction: "desc",
-  });
-  return data;
 }
 
 async function uploadDiff(prDetails: any) {
