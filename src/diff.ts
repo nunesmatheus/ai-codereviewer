@@ -7,6 +7,7 @@ import { Octokit } from "@octokit/rest";
 
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
+const downloadPath = ".";
 
 export const pullRequestDiffFileName = "pull_request.diff";
 
@@ -16,14 +17,12 @@ export async function getDiff(
   pullNumber: number
 ): Promise<File[]> {
   const artifactName = `diff-${pullNumber}`;
-  const downloadPath = ".";
 
   try {
     const previousDiff = await getPreviousDiff({
       owner,
       repo,
       artifactName,
-      downloadPath,
     });
     const currentDiff = await getPullRequestDiff({ owner, repo, pullNumber });
 
@@ -44,12 +43,10 @@ async function getPreviousDiff({
   owner,
   repo,
   artifactName,
-  downloadPath,
 }: {
   owner: string;
   repo: string;
   artifactName: string;
-  downloadPath: string;
 }): Promise<string> {
   const runId = await getLastSuccessfulRunId(owner, repo);
   core.info(`Last successful run ID: ${runId}`);
@@ -60,7 +57,7 @@ async function getPreviousDiff({
 
     if (artifactId) {
       core.info("Downloading and extracting artifact...");
-      await downloadAndExtractArtifact(artifactId, downloadPath);
+      await downloadAndExtractArtifact(artifactId);
       core.info("Found previous diff artifact!");
 
       return readFileSync(`${downloadPath}/${pullRequestDiffFileName}`, "utf8");
@@ -141,10 +138,7 @@ async function getPullRequestDiff({
   return String(response.data);
 }
 
-async function downloadAndExtractArtifact(
-  artifactId: number,
-  path: string
-): Promise<void> {
+async function downloadAndExtractArtifact(artifactId: number): Promise<void> {
   const { owner, repo } = github.context.repo;
   const response = await octokit.rest.actions.downloadArtifact({
     owner,
@@ -153,7 +147,7 @@ async function downloadAndExtractArtifact(
     archive_format: "zip",
   });
   const zip = new AdmZip(Buffer.from(response.data as string));
-  zip.extractAllTo(path, true);
+  zip.extractAllTo(downloadPath, true);
 }
 
 async function getArtifactId(
