@@ -8,61 +8,96 @@ import { Octokit } from "@octokit/rest";
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
 
+export const pullRequestDiffFileName = "pull_request.diff";
+
 export async function getDiff(
   owner: string,
   repo: string,
-  pull_number: number
+  pullNumber: number
 ): Promise<File[]> {
-  const artifactName = `diff-${pull_number}`;
+  const artifactName = `diff-${pullNumber}`;
   const downloadPath = ".";
 
   try {
-    const runId = await getLastSuccessfulRunId(owner, repo, "");
-    core.info(`Last successful run ID: ${runId}`);
-    let previousDiff = "";
-    if (runId) {
-      const artifactId = await getArtifactId(runId, artifactName);
-      core.info(`Last successful run artifact ID: ${artifactId}`);
-      if (artifactId) {
-        core.info("Downloading and extracting artifact...");
-        await downloadAndExtractArtifact(artifactId, downloadPath);
-        previousDiff = readFileSync(`${downloadPath}/current_diff.txt`, "utf8");
-        core.info("Found previous diff artifact!");
-      } else {
-        core.info("No artifact found for last successful run");
-      }
-    } else {
-      core.info("No successful last run found");
-    }
+    const previousDiff = await getPreviousDiff({
+      owner,
+      repo,
+      artifactName,
+      downloadPath,
+    });
+    const currentDiff = await getPullRequestDiff({ owner, repo, pullNumber });
 
-    const currentDiff = await getFullPrDiff({ owner, repo, pull_number });
-    writeFileSync("current_diff.txt", String(currentDiff));
+    writeFileSync(pullRequestDiffFileName, String(currentDiff));
 
     if (!previousDiff) return parseDiff(currentDiff);
 
-    let currentFilesDiff = parseDiff(String(currentDiff));
-    let previousFilesDiff = parseDiff(previousDiff);
-
-    return currentFilesDiff.filter((currentFile) => {
-      currentFile.chunks = currentFile.chunks.filter((currentChunk) => {
-        const isRepeatingChunk = !!previousFilesDiff.find((previousFile) => {
-          return previousFile.chunks.find((previousChunk) => {
-            return (
-              JSON.stringify(previousChunk.changes) ===
-              JSON.stringify(currentChunk.changes)
-            );
-          });
-        });
-        return !isRepeatingChunk;
-      });
-
-      return currentFile.chunks.length > 0;
-    });
+    return filterUpdatedChunks(
+      parseDiff(String(currentDiff)),
+      parseDiff(previousDiff)
+    );
   } catch (error) {
-    core.error(`Error: ${error}`);
-    core.info(`Artifact not found: ${artifactName}`);
-    return parseDiff("");
+    return handleDiffError(error, artifactName);
   }
+}
+
+async function getPreviousDiff({
+  owner,
+  repo,
+  artifactName,
+  downloadPath,
+}: {
+  owner: string;
+  repo: string;
+  artifactName: string;
+  downloadPath: string;
+}): Promise<string> {
+  const runId = await getLastSuccessfulRunId(owner, repo, "");
+  core.info(`Last successful run ID: ${runId}`);
+
+  if (runId) {
+    const artifactId = await getArtifactId(runId, artifactName);
+    core.info(`Last successful run artifact ID: ${artifactId}`);
+
+    if (artifactId) {
+      core.info("Downloading and extracting artifact...");
+      await downloadAndExtractArtifact(artifactId, downloadPath);
+      core.info("Found previous diff artifact!");
+
+      return readFileSync(`${downloadPath}/${pullRequestDiffFileName}`, "utf8");
+    } else {
+      core.info("No artifact found for last successful run");
+    }
+  } else {
+    core.info("No successful last run found");
+  }
+
+  return "";
+}
+
+function filterUpdatedChunks(
+  currentFilesDiff: File[],
+  previousFilesDiff: File[]
+): File[] {
+  return currentFilesDiff.filter((currentFile) => {
+    currentFile.chunks = currentFile.chunks.filter((currentChunk) => {
+      const hasChunkChanged = !previousFilesDiff.some((previousFile) =>
+        previousFile.chunks.some(
+          (previousChunk) =>
+            JSON.stringify(previousChunk.changes) ===
+            JSON.stringify(currentChunk.changes)
+        )
+      );
+      return hasChunkChanged;
+    });
+
+    return currentFile.chunks.length > 0;
+  });
+}
+
+function handleDiffError(error: any, artifactName: string): File[] {
+  core.error(`Error: ${error}`);
+  core.info(`Artifact not found: ${artifactName}`);
+  return parseDiff("");
 }
 
 async function getLastSuccessfulRunId(
@@ -78,7 +113,7 @@ async function getLastSuccessfulRunId(
     run_id: runId,
   });
 
-  const workflowId = runDetails.data.workflow_url.split("/").pop();
+  const workflowId = runDetails.data.workflow_url.split("/").pop() || "";
 
   const { data: runs } = await octokit.rest.actions.listWorkflowRuns({
     owner,
@@ -86,22 +121,21 @@ async function getLastSuccessfulRunId(
     branch,
     status: "completed",
     conclusion: "success",
-    // @ts-expect-error - workflow_id exists
     workflow_id: workflowId,
   });
 
   return runs.total_count > 0 ? runs.workflow_runs[0].id : null;
 }
 
-async function getFullPrDiff({
+async function getPullRequestDiff({
   owner,
   repo,
-  pull_number,
+  pullNumber,
 }: any): Promise<string> {
   const response = await octokit.pulls.get({
     owner,
     repo,
-    pull_number,
+    pull_number: pullNumber,
     mediaType: { format: "diff" },
   });
   return String(response.data);
@@ -118,8 +152,7 @@ async function downloadAndExtractArtifact(
     artifact_id: artifactId,
     archive_format: "zip",
   });
-  // @ts-expect-error - response.data is a string
-  const zip = new AdmZip(Buffer.from(response.data));
+  const zip = new AdmZip(Buffer.from(response.data as string));
   zip.extractAllTo(path, true);
 }
 

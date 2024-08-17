@@ -5,7 +5,7 @@ import { Octokit } from "@octokit/rest";
 import { Chunk, File } from "parse-diff";
 import minimatch from "minimatch";
 import { DefaultArtifactClient } from "@actions/artifact";
-import { getDiff } from "./diff";
+import { getDiff, pullRequestDiffFileName } from "./diff";
 
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
@@ -27,16 +27,10 @@ const jsonModeSupportedModels = [
 interface PRDetails {
   owner: string;
   repo: string;
-  pull_number: number;
+  pullNumber: number;
   title: string;
   description: string;
 }
-
-type Comment = {
-  body: string;
-  path: string;
-  line: number;
-};
 
 async function getPRDetails(): Promise<PRDetails> {
   const { repository, number } = JSON.parse(
@@ -50,7 +44,7 @@ async function getPRDetails(): Promise<PRDetails> {
   return {
     owner: repository.owner.login,
     repo: repository.name,
-    pull_number: number,
+    pullNumber: number,
     title: prResponse.data.title ?? "",
     description: prResponse.data.body ?? "",
   };
@@ -80,12 +74,18 @@ Git diff to review:
 
 \`\`\`diff
 ${chunk.content}
-${chunk.changes
-  // @ts-expect-error - ln and ln2 exists where needed
-  .map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
-  .join("\n")}
+${chunkChangesText(chunk)}
 \`\`\`
 `;
+}
+
+function chunkChangesText(chunk: Chunk): string {
+  return (
+    chunk.changes
+      // @ts-expect-error - ln and ln2 exists where needed
+      .map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
+      .join("\n")
+  );
 }
 
 async function getAIResponse(prompt: string): Promise<Array<{
@@ -150,13 +150,13 @@ function createComment(
 async function createReviewComment(
   owner: string,
   repo: string,
-  pull_number: number,
+  pullNumber: number,
   comments: Array<{ body: string; path: string; line: number }>
 ): Promise<void> {
   await octokit.pulls.createReview({
     owner,
     repo,
-    pull_number,
+    pull_number: pullNumber,
     comments,
     event: "COMMENT",
   });
@@ -187,9 +187,9 @@ async function analyzeCode(
 async function uploadDiff(prDetails: any) {
   core.info("Uploading patch as artifact...");
   const artifact = new DefaultArtifactClient();
-  const artifactName = `diff-${prDetails.pull_number}`;
+  const artifactName = `diff-${prDetails.pullNumber}`;
 
-  const files = ["current_diff.txt"];
+  const files = [pullRequestDiffFileName];
   await artifact.uploadArtifact(artifactName, files, ".", {
     retentionDays: 7,
   });
@@ -199,10 +199,7 @@ async function uploadDiff(prDetails: any) {
 function logDiff(diffFiles: File[]) {
   diffFiles.forEach((file) => {
     file.chunks.filter((chunk) => {
-      const changes = chunk.changes
-        // @ts-expect-error - ln and ln2 exists where needed
-        .map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
-        .join("\n");
+      const changes = chunkChangesText(chunk);
       core.info(`\n\n------- Changes:\n${changes}\n-------\n\n`);
     });
   });
@@ -215,7 +212,7 @@ async function main() {
   const diffFiles = await getDiff(
     prDetails.owner,
     prDetails.repo,
-    prDetails.pull_number
+    prDetails.pullNumber
   );
 
   if (diffFiles.length === 0) {
@@ -247,7 +244,7 @@ async function main() {
     await createReviewComment(
       prDetails.owner,
       prDetails.repo,
-      prDetails.pull_number,
+      prDetails.pullNumber,
       comments
     );
   }
