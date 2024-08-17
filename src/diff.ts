@@ -51,7 +51,7 @@ async function getPreviousDiff({
   artifactName: string;
   downloadPath: string;
 }): Promise<string> {
-  const runId = await getLastSuccessfulRunId(owner, repo, "");
+  const runId = await getLastSuccessfulRunId(owner, repo);
   core.info(`Last successful run ID: ${runId}`);
 
   if (runId) {
@@ -102,8 +102,7 @@ function handleDiffError(error: any, artifactName: string): File[] {
 
 async function getLastSuccessfulRunId(
   owner: string,
-  repo: string,
-  branch: string
+  repo: string
 ): Promise<number | null> {
   const runId = github.context.runId;
 
@@ -115,6 +114,7 @@ async function getLastSuccessfulRunId(
 
   const workflowId = runDetails.data.workflow_url.split("/").pop() || "";
 
+  const branch = runDetails.data.head_branch || "";
   const { data: runs } = await octokit.rest.actions.listWorkflowRuns({
     owner,
     repo,
