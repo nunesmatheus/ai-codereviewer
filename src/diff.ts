@@ -11,11 +11,17 @@ const downloadPath = ".";
 
 export const pullRequestDiffFileName = "pull_request.diff";
 
-export async function getDiff(
-  owner: string,
-  repo: string,
-  pullNumber: number
-): Promise<File[]> {
+type PullRequest = {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+};
+
+export async function getDiff({
+  owner,
+  repo,
+  pullNumber,
+}: PullRequest): Promise<File[]> {
   const artifactName = `diff-${pullNumber}`;
 
   try {
@@ -128,7 +134,7 @@ async function getPullRequestDiff({
   owner,
   repo,
   pullNumber,
-}: any): Promise<string> {
+}: PullRequest): Promise<string> {
   const response = await octokit.pulls.get({
     owner,
     repo,

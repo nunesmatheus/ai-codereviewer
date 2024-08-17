@@ -209,11 +209,11 @@ async function main() {
   core.info("Getting PR details...");
   const prDetails = await getPRDetails();
   core.info("Getting diff...");
-  const diffFiles = await getDiff(
-    prDetails.owner,
-    prDetails.repo,
-    prDetails.pullNumber
-  );
+  const diffFiles = await getDiff({
+    owner: prDetails.owner,
+    repo: prDetails.repo,
+    pullNumber: prDetails.pullNumber,
+  });
 
   if (diffFiles.length === 0) {
     core.info("No diff found");
