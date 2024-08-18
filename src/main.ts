@@ -10,6 +10,7 @@ import { getDiff, pullRequestDiffFileName } from "./diff";
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
 const OPENAI_API_MODEL: string = core.getInput("OPENAI_API_MODEL");
+const DEBUG: boolean = Boolean(core.getInput("debug"));
 
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
 
@@ -234,7 +235,7 @@ async function main() {
     );
   });
 
-  logDiff(filteredDiff);
+  if (DEBUG) logDiff(filteredDiff);
 
   core.info("Analyzing code with GPT...");
   const comments = await analyzeCode(filteredDiff, prDetails);
