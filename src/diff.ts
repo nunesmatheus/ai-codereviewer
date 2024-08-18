@@ -17,64 +17,40 @@ type PullRequest = {
   pullNumber: number;
 };
 
-export async function getDiff({
+export async function getDiff(pullRequestInfo: PullRequest): Promise<File[]> {
+  const currentDiff = await getPullRequestDiff(pullRequestInfo);
+  writeFileSync(pullRequestDiffFileName, String(currentDiff));
+
+  const previousDiff = await getPreviousDiff(pullRequestInfo);
+  if (!previousDiff) return parseDiff(currentDiff);
+
+  const currentDiffFiles = parseDiff(currentDiff);
+  const previousDiffFiles = parseDiff(previousDiff);
+  return filterUpdatedChunks(currentDiffFiles, previousDiffFiles);
+}
+
+async function getPreviousDiff(pullRequestInfo: PullRequest): Promise<string> {
+  const artifactId = await lastUploadedDiffArtifactId(pullRequestInfo);
+  core.info(`Last successful run artifact ID: ${artifactId || "not found"}`);
+  if (!artifactId) return "";
+
+  core.info("Downloading and extracting artifact...");
+  await downloadAndExtractArtifact(artifactId);
+
+  return readFileSync(`${downloadPath}/${pullRequestDiffFileName}`, "utf8");
+}
+
+async function lastUploadedDiffArtifactId({
   owner,
   repo,
   pullNumber,
-}: PullRequest): Promise<File[]> {
+}: PullRequest): Promise<number | null> {
   const artifactName = `diff-${pullNumber}`;
-
-  try {
-    const previousDiff = await getPreviousDiff({
-      owner,
-      repo,
-      artifactName,
-    });
-    const currentDiff = await getPullRequestDiff({ owner, repo, pullNumber });
-
-    writeFileSync(pullRequestDiffFileName, String(currentDiff));
-
-    if (!previousDiff) return parseDiff(currentDiff);
-
-    return filterUpdatedChunks(
-      parseDiff(String(currentDiff)),
-      parseDiff(previousDiff)
-    );
-  } catch (error) {
-    return handleDiffError(error, artifactName);
-  }
-}
-
-async function getPreviousDiff({
-  owner,
-  repo,
-  artifactName,
-}: {
-  owner: string;
-  repo: string;
-  artifactName: string;
-}): Promise<string> {
   const runId = await getLastSuccessfulRunId(owner, repo);
-  core.info(`Last successful run ID: ${runId}`);
+  core.info(`Last successful run ID: ${runId || "not found"}`);
+  if (!runId) return null;
 
-  if (runId) {
-    const artifactId = await getArtifactId(runId, artifactName);
-    core.info(`Last successful run artifact ID: ${artifactId}`);
-
-    if (artifactId) {
-      core.info("Downloading and extracting artifact...");
-      await downloadAndExtractArtifact(artifactId);
-      core.info("Found previous diff artifact!");
-
-      return readFileSync(`${downloadPath}/${pullRequestDiffFileName}`, "utf8");
-    } else {
-      core.info("No artifact found for last successful run");
-    }
-  } else {
-    core.info("No successful last run found");
-  }
-
-  return "";
+  return getArtifactId(runId, artifactName);
 }
 
 function filterUpdatedChunks(
@@ -97,27 +73,12 @@ function filterUpdatedChunks(
   });
 }
 
-function handleDiffError(error: any, artifactName: string): File[] {
-  core.error(`Error: ${error}`);
-  core.info(`Artifact not found: ${artifactName}`);
-  return parseDiff("");
-}
-
 async function getLastSuccessfulRunId(
   owner: string,
   repo: string
 ): Promise<number | null> {
   const runId = github.context.runId;
-
-  const runDetails = await octokit.rest.actions.getWorkflowRun({
-    owner,
-    repo,
-    run_id: runId,
-  });
-
-  const workflowId = runDetails.data.workflow_url.split("/").pop() || "";
-
-  const branch = runDetails.data.head_branch || "";
+  const { workflowId, branch } = await getRunDetails({ owner, repo, runId });
   const { data: runs } = await octokit.rest.actions.listWorkflowRuns({
     owner,
     repo,
@@ -128,6 +89,26 @@ async function getLastSuccessfulRunId(
   });
 
   return runs.total_count > 0 ? runs.workflow_runs[0].id : null;
+}
+
+async function getRunDetails({
+  owner,
+  repo,
+  runId,
+}: {
+  owner: string;
+  repo: string;
+  runId: number;
+}) {
+  const runDetails = await octokit.rest.actions.getWorkflowRun({
+    owner,
+    repo,
+    run_id: runId,
+  });
+
+  const workflowId = runDetails.data.workflow_url.split("/").pop() || "";
+  const branch = runDetails.data.head_branch || "";
+  return { workflowId, branch };
 }
 
 async function getPullRequestDiff({
