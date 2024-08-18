@@ -154,7 +154,7 @@ async function createReviewComment(
   comments: Array<{ body: string; path: string; line: number }>
 ): Promise<void> {
   core.info("--------- CREATING REVIEW COMMENT ---------");
-  comments.forEach(async (comment) => {
+  for (const comment of comments) {
     core.info(
       `\n\nCommenting ${comment.body} at ${comment.path}:${comment.line}\n\n`
     );
@@ -165,7 +165,7 @@ async function createReviewComment(
       comments: [comment],
       event: "COMMENT",
     });
-  });
+  }
 }
 
 async function analyzeCode(
