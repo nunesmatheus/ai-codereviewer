@@ -3,7 +3,6 @@ import * as core from "@actions/core";
 import OpenAI from "openai";
 import { Octokit } from "@octokit/rest";
 import { Chunk, File } from "parse-diff";
-import minimatch from "minimatch";
 import { DefaultArtifactClient } from "@actions/artifact";
 import { getDiff, pullRequestDiffFileName } from "./diff";
 
@@ -216,20 +215,7 @@ async function main() {
     pullNumber: prDetails.pullNumber,
   });
 
-  core.info("Parsing diff...");
-
-  const excludePatterns = core
-    .getInput("exclude")
-    .split(",")
-    .map((s) => s.trim());
-
-  const filteredDiff = diffFiles.filter((file) => {
-    return !excludePatterns.some((pattern) =>
-      minimatch(file.to ?? "", pattern)
-    );
-  });
-
-  if (filteredDiff.length === 0) {
+  if (diffFiles.length === 0) {
     core.info(
       "There is no diff identified between this run and the previous one, aborting..."
     );
@@ -237,10 +223,10 @@ async function main() {
     return false;
   }
 
-  if (DEBUG) logDiff(filteredDiff);
+  if (DEBUG) logDiff(diffFiles);
 
   core.info("Analyzing code with GPT...");
-  const comments = await analyzeCode(filteredDiff, prDetails);
+  const comments = await analyzeCode(diffFiles, prDetails);
 
   core.info("Creating review comments...");
   if (comments.length > 0) {
