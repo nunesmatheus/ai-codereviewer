@@ -19,7 +19,7 @@ type PullRequest = {
 
 export async function getDiff(pullRequestInfo: PullRequest): Promise<File[]> {
   const currentDiff = await getPullRequestDiff(pullRequestInfo);
-  writeFileSync(pullRequestDiffFileName, String(currentDiff));
+  writeFileSync(pullRequestDiffFileName, currentDiff);
 
   const previousDiff = await getPreviousDiff(pullRequestInfo);
   if (!previousDiff) return parseDiff(currentDiff);

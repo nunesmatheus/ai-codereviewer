@@ -185,16 +185,16 @@ async function analyzeCode(
   return comments;
 }
 
-async function uploadDiff(prDetails: any) {
-  core.info("Uploading patch as artifact...");
+async function uploadDiff(pullNumber: number) {
+  core.info("Uploading diff as artifact...");
   const artifact = new DefaultArtifactClient();
-  const artifactName = `diff-${prDetails.pullNumber}`;
+  const artifactName = `diff-${pullNumber}`;
 
   const files = [pullRequestDiffFileName];
   await artifact.uploadArtifact(artifactName, files, ".", {
     retentionDays: 7,
   });
-  core.info("Uploaded artifact!");
+  core.info("Uploaded diff artifact!");
 }
 
 function logDiff(diffFiles: File[]) {
@@ -218,7 +218,7 @@ async function main() {
 
   if (diffFiles.length === 0) {
     core.info("No diff found");
-    await uploadDiff(prDetails);
+    await uploadDiff(prDetails.pullNumber);
     return false;
   }
 
@@ -250,7 +250,7 @@ async function main() {
     );
   }
 
-  await uploadDiff(prDetails);
+  await uploadDiff(prDetails.pullNumber);
 }
 
 main().catch((error) => {
