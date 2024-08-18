@@ -2,13 +2,13 @@ import * as core from "@actions/core";
 import * as github from "@actions/github";
 import AdmZip from "adm-zip";
 import parseDiff, { File } from "parse-diff";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { Octokit } from "@octokit/rest";
 import minimatch from "minimatch";
 
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
-const downloadPath = ".";
+const downloadPath = "./previous";
 
 export const pullRequestDiffFileName = "pull_request.diff";
 
@@ -181,6 +181,7 @@ async function downloadAndExtractArtifact(artifactId: number): Promise<void> {
     archive_format: "zip",
   });
   const zip = new AdmZip(Buffer.from(response.data as string));
+  mkdirSync(downloadPath, { recursive: true });
   zip.extractAllTo(downloadPath, true);
 }
 
