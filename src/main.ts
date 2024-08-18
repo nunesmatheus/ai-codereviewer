@@ -185,11 +185,16 @@ async function analyzeCode(
 }
 
 async function uploadDiff(pullNumber: number) {
+  // TODO: Delete all the others?
   core.info("Uploading diff as artifact...");
   const artifact = new DefaultArtifactClient();
   const artifactName = `diff-${pullNumber}`;
 
   const files = [pullRequestDiffFileName];
+  const diffFile = readFileSync(`./${pullRequestDiffFileName}`, "utf8");
+  core.info(
+    `diffFile at ${pullRequestDiffFileName}:\n${diffFile.substring(0, 1000)}`
+  );
   await artifact.uploadArtifact(artifactName, files, ".", {
     retentionDays: 7,
   });
@@ -223,7 +228,7 @@ async function main() {
     return false;
   }
 
-  if (DEBUG) logDiff(diffFiles);
+  // if (DEBUG) logDiff(diffFiles);
 
   core.info("Analyzing code with GPT...");
   const comments = await analyzeCode(diffFiles, prDetails);

@@ -20,14 +20,35 @@ type PullRequest = {
 
 export async function getDiff(pullRequestInfo: PullRequest): Promise<File[]> {
   const currentDiff = await getPullRequestDiff(pullRequestInfo);
-  const currentDiffFiles = filterExcludedFiles(parseDiff(currentDiff));
   writeFileSync(pullRequestDiffFileName, currentDiff);
+  const contentAfter = readFileSync(`./${pullRequestDiffFileName}`, "utf8");
+  console.log(`contentAfter: ${contentAfter.substring(0, 1000)}`);
+  const currentDiffFiles = filterExcludedFiles(parseDiff(currentDiff));
+  console.log("-------- CURRENT DIFF ---------");
+  logDiff(currentDiffFiles);
+  core.info(
+    `Writing diff to ${pullRequestDiffFileName}: ${currentDiff.substring(
+      0,
+      1000
+    )}`
+  );
 
   const previousDiff = await getPreviousDiff(pullRequestInfo);
   if (!previousDiff) return currentDiffFiles;
 
   const previousDiffFiles = filterExcludedFiles(parseDiff(previousDiff));
+  console.log("-------- PREVIOUS DIFF ---------");
+  logDiff(previousDiffFiles);
   return filterUpdatedChunks(currentDiffFiles, previousDiffFiles);
+}
+
+function logDiff(diffFiles: File[]) {
+  diffFiles.forEach((file) => {
+    file.chunks.forEach((chunk) => {
+      const changes = chunkChangesText(chunk);
+      core.info(`\n\n------- Changes:\n${changes}\n-------\n\n`);
+    });
+  });
 }
 
 function filterExcludedFiles(files: File[]): File[] {
