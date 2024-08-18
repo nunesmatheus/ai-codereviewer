@@ -110,8 +110,7 @@ async function getLastSuccessfulRunId(
     owner,
     repo,
     branch,
-    status: "completed",
-    conclusion: "success",
+    status: "success",
     workflow_id: workflowId,
   });
 
