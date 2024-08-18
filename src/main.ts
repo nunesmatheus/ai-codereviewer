@@ -216,12 +216,6 @@ async function main() {
     pullNumber: prDetails.pullNumber,
   });
 
-  if (diffFiles.length === 0) {
-    core.info("No diff found");
-    await uploadDiff(prDetails.pullNumber);
-    return false;
-  }
-
   core.info("Parsing diff...");
 
   const excludePatterns = core
@@ -234,6 +228,14 @@ async function main() {
       minimatch(file.to ?? "", pattern)
     );
   });
+
+  if (filteredDiff.length === 0) {
+    core.info(
+      "There is no diff identified between this run and the previous one, aborting..."
+    );
+    await uploadDiff(prDetails.pullNumber);
+    return false;
+  }
 
   if (DEBUG) logDiff(filteredDiff);
 
