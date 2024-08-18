@@ -105,6 +105,7 @@ async function getLastSuccessfulRunId(
 ): Promise<number | null> {
   const runId = github.context.runId;
   const { workflowId, branch } = await getRunDetails({ owner, repo, runId });
+  console.log("workflowId", workflowId);
   const { data: runs } = await octokit.rest.actions.listWorkflowRuns({
     owner,
     repo,
