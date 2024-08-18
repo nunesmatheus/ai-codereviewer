@@ -155,7 +155,9 @@ async function createReviewComment(
 ): Promise<void> {
   core.info("--------- CREATING REVIEW COMMENT ---------");
   comments.forEach(async (comment) => {
-    core.info(`\n\nCommenting this:\n${comment}\n\n`);
+    core.info(
+      `\n\nCommenting ${comment.body} at ${comment.path}:${comment.line}\n\n`
+    );
     await octokit.pulls.createReview({
       owner,
       repo,
@@ -195,10 +197,6 @@ async function uploadDiff(pullNumber: number) {
   const artifactName = `diff-${pullNumber}`;
 
   const files = [pullRequestDiffFileName];
-  const diffFile = readFileSync(`./${pullRequestDiffFileName}`, "utf8");
-  core.info(
-    `diffFile at ${pullRequestDiffFileName}:\n${diffFile.substring(0, 1000)}`
-  );
   await artifact.uploadArtifact(artifactName, files, ".", {
     retentionDays: 7,
   });
@@ -232,7 +230,7 @@ async function main() {
     return false;
   }
 
-  // if (DEBUG) logDiff(diffFiles);
+  if (DEBUG) logDiff(diffFiles);
 
   core.info("Analyzing code with GPT...");
   const comments = await analyzeCode(diffFiles, prDetails);
