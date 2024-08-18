@@ -153,19 +153,13 @@ async function createReviewComment(
   pullNumber: number,
   comments: Array<{ body: string; path: string; line: number }>
 ): Promise<void> {
-  core.info("--------- CREATING REVIEW COMMENT ---------");
-  for (const comment of comments) {
-    core.info(
-      `\n\nCommenting ${comment.body} at ${comment.path}:${comment.line}\n\n`
-    );
-    await octokit.pulls.createReview({
-      owner,
-      repo,
-      pull_number: pullNumber,
-      comments: [comment],
-      event: "COMMENT",
-    });
-  }
+  await octokit.pulls.createReview({
+    owner,
+    repo,
+    pull_number: pullNumber,
+    comments,
+    event: "COMMENT",
+  });
 }
 
 async function analyzeCode(
