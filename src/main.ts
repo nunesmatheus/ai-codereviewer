@@ -185,14 +185,13 @@ async function analyzeCode(
 }
 
 async function uploadDiff(pullNumber: number) {
-  // TODO: Delete all the others?
   core.info("Uploading diff as artifact...");
   const artifact = new DefaultArtifactClient();
   const artifactName = `diff-${pullNumber}`;
 
   const files = [pullRequestDiffFileName];
   await artifact.uploadArtifact(artifactName, files, ".", {
-    retentionDays: 7,
+    retentionDays: 14,
   });
   core.info("Uploaded diff artifact!");
 }

@@ -1,7 +1,7 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import AdmZip from "adm-zip";
-import parseDiff, { File } from "parse-diff";
+import parseDiff, { File, Chunk } from "parse-diff";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { Octokit } from "@octokit/rest";
 import minimatch from "minimatch";
@@ -19,15 +19,68 @@ type PullRequest = {
 };
 
 export async function getDiff(pullRequestInfo: PullRequest): Promise<File[]> {
-  const currentDiff = await getPullRequestDiff(pullRequestInfo);
-  writeFileSync(pullRequestDiffFileName, currentDiff);
-  const currentDiffFiles = filterExcludedFiles(parseDiff(currentDiff));
+  const currentDiffFiles = await fetchCurrentDiff(pullRequestInfo);
+  const previousDiffFiles = await fetchPreviousDiff(pullRequestInfo);
+  if (!previousDiffFiles) return currentDiffFiles;
 
-  const previousDiff = await getPreviousDiff(pullRequestInfo);
-  if (!previousDiff) return currentDiffFiles;
-
-  const previousDiffFiles = filterExcludedFiles(parseDiff(previousDiff));
   return filterUpdatedChunks(currentDiffFiles, previousDiffFiles);
+}
+
+async function fetchCurrentDiff({
+  owner,
+  repo,
+  pullNumber,
+}: PullRequest): Promise<File[]> {
+  const response = await octokit.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+    mediaType: { format: "diff" },
+  });
+  const currentDiff = String(response.data);
+  persistCurrentDiff(currentDiff);
+  return processDiff(currentDiff);
+}
+
+async function fetchPreviousDiff(
+  pullRequestInfo: PullRequest
+): Promise<File[]> {
+  const artifactId = await lastUploadedDiffArtifactId(pullRequestInfo);
+  core.info(`Last successful run artifact ID: ${artifactId || "not found"}`);
+  if (!artifactId) return parseDiff("");
+
+  core.info("Downloading and extracting artifact...");
+  await downloadAndExtractArtifact(artifactId);
+
+  const previousDiff = readFileSync(
+    `${downloadPath}/${pullRequestDiffFileName}`,
+    "utf8"
+  );
+  return processDiff(previousDiff);
+}
+
+/**
+ * Filters out the chunks from the latest pull request diff that didn't change comparing to the diff from the previous push,
+ * meaning they were not touched and should not be reviewed again.
+ *
+ * @returns The filtered array of files containing only the chunks that are completely new or were updated.
+ */
+function filterUpdatedChunks(
+  currentFilesDiff: File[],
+  previousFilesDiff: File[]
+): File[] {
+  return currentFilesDiff.filter((currentFile) => {
+    currentFile.chunks = currentFile.chunks.filter((currentChunk) => {
+      return !hasChunk(previousFilesDiff, currentChunk);
+    });
+
+    return currentFile.chunks.length > 0;
+  });
+}
+
+function processDiff(diff: string): File[] {
+  const diffFiles = parseDiff(diff);
+  return filterExcludedFiles(diffFiles);
 }
 
 function filterExcludedFiles(files: File[]): File[] {
@@ -35,6 +88,7 @@ function filterExcludedFiles(files: File[]): File[] {
     .getInput("exclude")
     .split(",")
     .map((s) => s.trim());
+
   return files.filter((file) => {
     return !excludePatterns.some((pattern) =>
       minimatch(file.to ?? "", pattern)
@@ -42,15 +96,13 @@ function filterExcludedFiles(files: File[]): File[] {
   });
 }
 
-async function getPreviousDiff(pullRequestInfo: PullRequest): Promise<string> {
-  const artifactId = await lastUploadedDiffArtifactId(pullRequestInfo);
-  core.info(`Last successful run artifact ID: ${artifactId || "not found"}`);
-  if (!artifactId) return "";
-
-  core.info("Downloading and extracting artifact...");
-  await downloadAndExtractArtifact(artifactId);
-
-  return readFileSync(`${downloadPath}/${pullRequestDiffFileName}`, "utf8");
+function hasChunk(diffFiles: File[], chunk: Chunk): Boolean {
+  return diffFiles.some((diffFile) => {
+    return diffFile.chunks.some(
+      (fileChunk) =>
+        JSON.stringify(fileChunk.changes) === JSON.stringify(chunk.changes)
+    );
+  });
 }
 
 async function lastUploadedDiffArtifactId({
@@ -64,26 +116,6 @@ async function lastUploadedDiffArtifactId({
   if (!runId) return null;
 
   return getArtifactId(runId, artifactName);
-}
-
-function filterUpdatedChunks(
-  currentFilesDiff: File[],
-  previousFilesDiff: File[]
-): File[] {
-  return currentFilesDiff.filter((currentFile) => {
-    currentFile.chunks = currentFile.chunks.filter((currentChunk) => {
-      const hasChunkChanged = !previousFilesDiff.some((previousFile) =>
-        previousFile.chunks.some(
-          (previousChunk) =>
-            JSON.stringify(previousChunk.changes) ===
-            JSON.stringify(currentChunk.changes)
-        )
-      );
-      return hasChunkChanged;
-    });
-
-    return currentFile.chunks.length > 0;
-  });
 }
 
 async function getLastSuccessfulRunId(
@@ -123,18 +155,13 @@ async function getRunDetails({
   return { workflowId, branch };
 }
 
-async function getPullRequestDiff({
-  owner,
-  repo,
-  pullNumber,
-}: PullRequest): Promise<string> {
-  const response = await octokit.pulls.get({
-    owner,
-    repo,
-    pull_number: pullNumber,
-    mediaType: { format: "diff" },
-  });
-  return String(response.data);
+/**
+  Persist the current diff to a file so it can be uploaded as a Github Actions artifact and downloaded in the next run
+  to compare with the current pull request diff and find what changed between pushes
+  * @param  {[String]} data [Text diff]
+*/
+function persistCurrentDiff(data: string): void {
+  writeFileSync(pullRequestDiffFileName, data);
 }
 
 async function downloadAndExtractArtifact(artifactId: number): Promise<void> {
