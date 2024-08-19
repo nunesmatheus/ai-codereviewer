@@ -10,9 +10,13 @@ inputs:
   OPENAI_API_MODEL:
     description: "OpenAI API model."
     required: false
-    default: "gpt-4"
+    default: "gpt-4o"
   exclude:
     description: "Glob patterns to exclude files from the diff analysis"
+    required: false
+    default: ""
+  debug:
+    description: "Whether debugging logs should be printed during execution."
     required: false
     default: ""
 runs:

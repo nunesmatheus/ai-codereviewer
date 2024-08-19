@@ -12,14 +12,18 @@
     "lint": "prettier --check ."
   },
   "dependencies": {
+    "@actions/artifact": "^2.1.7",
     "@actions/core": "^1.10.0",
     "@octokit/rest": "^19.0.7",
+    "adm-zip": "^0.5.12",
     "minimatch": "^7.4.2",
     "openai": "^4.20.1",
     "parse-diff": "^0.11.1",
     "ts-node": "^10.9.1"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.5",
+    "@types/diff": "^5.2.1",
     "@types/node": "^18.15.5",
     "@vercel/ncc": "^0.36.1",
     "prettier": "^2.8.6",
