@@ -17,20 +17,32 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
+type Comment = {
+  body: string;
+  path: string;
+  line: number;
+  side: string;
+};
+
+type AiResponse = {
+  lineNumber: number;
+  reviewComment: string;
+};
+
+type PRDetails = {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  title: string;
+  description: string;
+};
+
 const jsonModeSupportedModels = [
   "gpt-4-1106-preview",
   "gpt-3.5-turbo",
   "gpt-4-turbo",
   "gpt-4o",
 ];
-
-interface PRDetails {
-  owner: string;
-  repo: string;
-  pullNumber: number;
-  title: string;
-  description: string;
-}
 
 async function getPRDetails(): Promise<PRDetails> {
   const { repository, number } = JSON.parse(
@@ -88,10 +100,9 @@ function chunkChangesText(chunk: Chunk): string {
   );
 }
 
-async function getAIResponse(prompt: string): Promise<Array<{
-  lineNumber: string;
-  reviewComment: string;
-}> | null> {
+async function getAIResponse(
+  prompt: string
+): Promise<Array<AiResponse> | null> {
   const queryConfig = {
     model: OPENAI_API_MODEL,
     temperature: 0.2,
@@ -130,20 +141,47 @@ function jsonModeOptions(): Record<string, unknown> {
 function createComment(
   file: File,
   chunk: Chunk,
-  aiResponses: Array<{
-    lineNumber: string;
-    reviewComment: string;
-  }>
-): Array<{ body: string; path: string; line: number }> {
-  return aiResponses.flatMap((aiResponse) => {
-    if (!file.to) {
-      return [];
-    }
+  aiResponses: Array<AiResponse>
+): Array<Comment> {
+  if (!file.to) return [];
+
+  aiResponses = filterOutHallucinatedLineNumbers(chunk, aiResponses);
+  return aiResponses.map((aiResponse) => {
     return {
       body: aiResponse.reviewComment,
-      path: file.to,
+      path: file.to || "",
       line: Number(aiResponse.lineNumber),
+      side: commentDiffSide(chunk, aiResponse),
     };
+  });
+}
+
+function filterOutHallucinatedLineNumbers(
+  chunk: Chunk,
+  aiResponses: Array<AiResponse>
+): Array<AiResponse> {
+  return aiResponses.filter((aiResponse) => {
+    const refersToActualChange = Boolean(changeFromLine(chunk, aiResponse));
+    if (!refersToActualChange && DEBUG)
+      core.info(
+        `Ignoring comment on line #${aiResponse.lineNumber} as it refers to a line that was not touched: ${aiResponse.reviewComment}.`
+      );
+    return refersToActualChange;
+  });
+}
+
+function commentDiffSide(chunk: Chunk, aiResponse: AiResponse): string {
+  const change = changeFromLine(chunk, aiResponse);
+  return change.type === "add" ? "RIGHT" : "LEFT";
+}
+
+function changeFromLine(chunk: Chunk, aiResponse: AiResponse): any {
+  if (!aiResponse.lineNumber) return null;
+
+  return chunk.changes.find((change: any) => {
+    if (change.type === "normal") return false;
+
+    return change.ln === aiResponse.lineNumber;
   });
 }
 
@@ -151,13 +189,13 @@ async function createReviewComment(
   owner: string,
   repo: string,
   pullNumber: number,
-  comments: Array<{ body: string; path: string; line: number }>
+  comments: Array<Comment>
 ): Promise<void> {
   await octokit.pulls.createReview({
     owner,
     repo,
     pull_number: pullNumber,
-    comments,
+    threads: comments,
     event: "COMMENT",
   });
 }
@@ -165,8 +203,8 @@ async function createReviewComment(
 async function analyzeCode(
   parsedDiff: File[],
   prDetails: PRDetails
-): Promise<Array<{ body: string; path: string; line: number }>> {
-  const comments: Array<{ body: string; path: string; line: number }> = [];
+): Promise<Array<Comment>> {
+  const comments: Array<Comment> = [];
 
   for (const file of parsedDiff) {
     if (file.to === "/dev/null") continue; // Ignore deleted files
