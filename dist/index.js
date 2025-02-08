@@ -310,24 +310,38 @@ function getAIResponse(prompt) {
             const result = yield model.generateContent(prompt);
             const response = result.response;
             const text = response.text();
+            core.info("Raw AI response:");
+            core.info(text);
             // Extract JSON from markdown code block if present
             const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+            if (jsonMatch) {
+                core.info("Found JSON in code block:");
+                core.info(jsonMatch[1]);
+            }
             const jsonStr = jsonMatch ? jsonMatch[1] : text;
             try {
                 const parsed = JSON.parse(jsonStr);
+                core.info("Parsed JSON:");
+                core.info(JSON.stringify(parsed, null, 2));
                 if (!parsed.reviews || !Array.isArray(parsed.reviews)) {
                     core.warning("AI response did not contain a valid reviews array");
                     return null;
                 }
+                core.info(`Found ${parsed.reviews.length} review comments`);
                 return parsed.reviews;
             }
             catch (parseError) {
                 core.warning(`Failed to parse AI response as JSON: ${text}`);
+                core.warning(`Parse error: ${parseError}`);
                 return null;
             }
         }
         catch (error) {
-            console.error("Error:", error);
+            console.error("Error getting AI response:", error);
+            if (error instanceof Error) {
+                core.error(`Error details: ${error.message}`);
+                core.error(`Stack trace: ${error.stack}`);
+            }
             return null;
         }
     });
