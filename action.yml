@@ -1,16 +1,12 @@
 name: "AI Code Review Action"
-description: "Perform code reviews and comment on diffs using OpenAI API."
+description: "Perform code reviews and comment on diffs using Google's Gemini AI."
 inputs:
   GITHUB_TOKEN:
     description: "GitHub token to interact with the repository."
     required: true
-  OPENAI_API_KEY:
-    description: "OpenAI API key for GPT."
+  GOOGLE_API_KEY:
+    description: "Google API key for Gemini."
     required: true
-  OPENAI_API_MODEL:
-    description: "OpenAI API model."
-    required: false
-    default: "gpt-4o"
   exclude:
     description: "Glob patterns to exclude files from the diff analysis"
     required: false

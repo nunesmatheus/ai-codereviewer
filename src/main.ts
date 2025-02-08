@@ -1,21 +1,19 @@
 import { readFileSync } from "fs";
 import * as core from "@actions/core";
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Octokit } from "@octokit/rest";
 import { Chunk, File } from "parse-diff";
 import { DefaultArtifactClient } from "@actions/artifact";
 import { getDiff, pullRequestDiffFileName } from "./diff";
 
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
-const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
-const OPENAI_API_MODEL: string = core.getInput("OPENAI_API_MODEL");
+const GOOGLE_API_KEY: string = core.getInput("GOOGLE_API_KEY");
 const DEBUG: boolean = Boolean(core.getInput("debug"));
 
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
 
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 type Comment = {
   body: string;
@@ -37,13 +35,6 @@ type PRDetails = {
   description: string;
 };
 
-const jsonModeSupportedModels = [
-  "gpt-4-1106-preview",
-  "gpt-3.5-turbo",
-  "gpt-4-turbo",
-  "gpt-4o",
-];
-
 async function getPRDetails(): Promise<PRDetails> {
   const { repository, number } = JSON.parse(
     readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8")
@@ -62,18 +53,31 @@ async function getPRDetails(): Promise<PRDetails> {
   };
 }
 
-function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
+function createPrompt(files: File[], prDetails: PRDetails): string {
+  const fileChanges = files
+    .map((file) => {
+      const changes = file.chunks
+        .map((chunk) => {
+          return `\`\`\`diff
+${chunk.content}
+${chunkChangesText(chunk)}
+\`\`\``;
+        })
+        .join("\n\n");
+
+      return `Changes in file "${file.to}":\n${changes}`;
+    })
+    .join("\n\n---\n\n");
+
   return `Your task is to review pull requests. Instructions:
-- Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewComment": "<review comment>"}]}
+- Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewComment": "<review comment>", "filePath": "<file_path>"}]}
 - Do not give positive comments or compliments.
 - Provide comments and suggestions ONLY if there is something to improve, otherwise "reviews" should be an empty array.
 - Write the comment in GitHub Markdown format.
 - Use the given description only for the overall context and only comment the code.
 - IMPORTANT: NEVER suggest adding comments to the code.
 
-Review the following code diff in the file "${
-    file.to
-  }" and take the pull request title and description into account when writing the response.
+Review the following code changes and take the pull request title and description into account when writing the response.
 
 Pull request title: ${prDetails.title}
 Pull request description:
@@ -82,13 +86,9 @@ Pull request description:
 ${prDetails.description}
 ---
 
-Git diff to review:
+Changes to review:
 
-\`\`\`diff
-${chunk.content}
-${chunkChangesText(chunk)}
-\`\`\`
-`;
+${fileChanges}`;
 }
 
 function chunkChangesText(chunk: Chunk): string {
@@ -102,87 +102,86 @@ function chunkChangesText(chunk: Chunk): string {
 
 async function getAIResponse(
   prompt: string
-): Promise<Array<AiResponse> | null> {
-  const queryConfig = {
-    model: OPENAI_API_MODEL,
-    temperature: 0.2,
-    max_tokens: 700,
-    top_p: 1,
-    frequency_penalty: 0,
-    presence_penalty: 0,
-  };
-
+): Promise<Array<AiResponse & { filePath: string }> | null> {
   try {
-    const response = await openai.chat.completions.create({
-      ...queryConfig,
-      ...jsonModeOptions(),
-      messages: [
-        {
-          role: "system",
-          content: prompt,
-        },
-      ],
-    });
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const text = response.text();
 
-    const res = response.choices[0].message?.content?.trim() || "{}";
-    return JSON.parse(res).reviews;
+    core.info("Raw AI response:");
+    core.info(text);
+
+    // Extract JSON from markdown code block if present
+    const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    if (jsonMatch) {
+      core.info("Found JSON in code block:");
+      core.info(jsonMatch[1]);
+    }
+    const jsonStr = jsonMatch ? jsonMatch[1] : text;
+
+    try {
+      const parsed = JSON.parse(jsonStr);
+      core.info("Parsed JSON:");
+      core.info(JSON.stringify(parsed, null, 2));
+
+      if (!parsed.reviews || !Array.isArray(parsed.reviews)) {
+        core.warning("AI response did not contain a valid reviews array");
+        return null;
+      }
+
+      core.info(`Found ${parsed.reviews.length} review comments`);
+      return parsed.reviews;
+    } catch (parseError) {
+      core.warning(`Failed to parse AI response as JSON: ${text}`);
+      core.warning(`Parse error: ${parseError}`);
+      return null;
+    }
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error getting AI response:", error);
+    if (error instanceof Error) {
+      core.error(`Error details: ${error.message}`);
+      core.error(`Stack trace: ${error.stack}`);
+    }
     return null;
   }
 }
 
-function jsonModeOptions(): Record<string, unknown> {
-  if (!jsonModeSupportedModels.includes(OPENAI_API_MODEL)) return {};
-
-  return { response_format: { type: "json_object" } };
+function getLineNumber(change: any): number | null {
+  if (change.type === "add") return change.ln;
+  if (change.type === "del") return change.ln;
+  if (change.type === "normal") return change.ln1 || change.ln2;
+  return null;
 }
 
-function createComment(
-  file: File,
-  chunk: Chunk,
-  aiResponses: Array<AiResponse>
+function createComments(
+  files: File[],
+  aiResponses: Array<AiResponse & { filePath: string }>
 ): Array<Comment> {
-  if (!file.to) return [];
+  return aiResponses
+    .map((aiResponse) => {
+      const file = files.find((f) => f.to === aiResponse.filePath);
+      if (!file) return null;
 
-  aiResponses = filterOutHallucinatedLineNumbers(chunk, aiResponses);
-  return aiResponses.map((aiResponse) => {
-    return {
-      body: aiResponse.reviewComment,
-      path: file.to || "",
-      line: Number(aiResponse.lineNumber),
-      side: commentDiffSide(chunk, aiResponse),
-    };
-  });
-}
-
-function filterOutHallucinatedLineNumbers(
-  chunk: Chunk,
-  aiResponses: Array<AiResponse>
-): Array<AiResponse> {
-  return aiResponses.filter((aiResponse) => {
-    const refersToActualChange = Boolean(changeFromLine(chunk, aiResponse));
-    if (!refersToActualChange && DEBUG)
-      core.info(
-        `Ignoring comment on line #${aiResponse.lineNumber} as it refers to a line that was not touched: ${aiResponse.reviewComment}.`
+      const chunk = file.chunks.find((chunk) =>
+        chunk.changes.some(
+          (change) => getLineNumber(change) === aiResponse.lineNumber
+        )
       );
-    return refersToActualChange;
-  });
-}
+      if (!chunk) return null;
 
-function commentDiffSide(chunk: Chunk, aiResponse: AiResponse): string {
-  const change = changeFromLine(chunk, aiResponse);
-  return change.type === "add" ? "RIGHT" : "LEFT";
-}
+      const change = chunk.changes.find(
+        (change) => getLineNumber(change) === aiResponse.lineNumber
+      );
+      if (!change) return null;
 
-function changeFromLine(chunk: Chunk, aiResponse: AiResponse): any {
-  if (!aiResponse.lineNumber) return null;
-
-  return chunk.changes.find((change: any) => {
-    if (change.type === "normal") return false;
-
-    return change.ln === aiResponse.lineNumber;
-  });
+      return {
+        body: aiResponse.reviewComment,
+        path: aiResponse.filePath,
+        line: aiResponse.lineNumber,
+        side: change.type === "add" ? "RIGHT" : "LEFT",
+      };
+    })
+    .filter((comment): comment is Comment => comment !== null);
 }
 
 async function createReviewComment(
@@ -204,22 +203,16 @@ async function analyzeCode(
   parsedDiff: File[],
   prDetails: PRDetails
 ): Promise<Array<Comment>> {
-  const comments: Array<Comment> = [];
-
-  for (const file of parsedDiff) {
-    if (file.to === "/dev/null") continue; // Ignore deleted files
-    for (const chunk of file.chunks) {
-      const prompt = createPrompt(file, chunk, prDetails);
-      const aiResponse = await getAIResponse(prompt);
-      if (aiResponse) {
-        const newComments = createComment(file, chunk, aiResponse);
-        if (newComments) {
-          comments.push(...newComments);
-        }
-      }
-    }
+  const prompt = createPrompt(parsedDiff, prDetails);
+  if (DEBUG) {
+    core.info("Generated prompt:");
+    core.info(prompt);
   }
-  return comments;
+
+  const aiResponse = await getAIResponse(prompt);
+  if (!aiResponse) return [];
+
+  return createComments(parsedDiff, aiResponse);
 }
 
 async function uploadDiff(pullNumber: number) {
@@ -263,7 +256,7 @@ async function main() {
 
   if (DEBUG) logDiff(diffFiles);
 
-  core.info("Analyzing code with GPT...");
+  core.info("Analyzing code with Gemini...");
   const comments = await analyzeCode(diffFiles, prDetails);
 
   core.info("Creating review comments...");
