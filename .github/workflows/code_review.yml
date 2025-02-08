@@ -1,4 +1,4 @@
-name: Code Review with OpenAI
+name: Code Review with Gemini
 on:
   pull_request:
     types:
@@ -16,6 +16,5 @@ jobs:
         uses: nunesmatheus/ai-codereviewer@main
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_API_MODEL: "gpt-4o"
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           exclude: "yarn.lock,dist/**"
