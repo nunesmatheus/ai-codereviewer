@@ -107,7 +107,22 @@ async function getAIResponse(
     const result = await model.generateContent(prompt);
     const response = result.response;
     const text = response.text();
-    return JSON.parse(text).reviews;
+
+    // Extract JSON from markdown code block if present
+    const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    const jsonStr = jsonMatch ? jsonMatch[1] : text;
+
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (!parsed.reviews || !Array.isArray(parsed.reviews)) {
+        core.warning("AI response did not contain a valid reviews array");
+        return null;
+      }
+      return parsed.reviews;
+    } catch (parseError) {
+      core.warning(`Failed to parse AI response as JSON: ${text}`);
+      return null;
+    }
   } catch (error) {
     console.error("Error:", error);
     return null;
